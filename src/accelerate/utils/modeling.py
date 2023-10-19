@@ -1144,6 +1144,18 @@ def check_device_map(model: nn.Module, device_map: Dict[str, Union[int, str, tor
         )
 
 
+def restore_shared_tensors(state_dict: Dict[str, torch.Tensor], metadata: Dict[str, str]):
+    # restore shared tensors
+    for k, v in metadata.items():
+        if v in state_dict:
+            if k in state_dict:
+                raise ValueError(f"Shared tensor {v} is already in the state dict.")
+            state_dict[k] = state_dict[v]
+            print(f"Restoring shared tensor {k} from {v}")
+
+    return state_dict
+
+
 def load_state_dict(checkpoint_file, device_map=None):
     """
     Load a checkpoint from a given file. If the checkpoint is in the safetensors format and a device map is passed, the
@@ -1179,11 +1191,16 @@ def load_state_dict(checkpoint_file, device_map=None):
         elif metadata["format"] != "pt":
             raise ValueError(f"The checkpoint passed was saved with {metadata['format']}, we need a the pt format.")
         if device_map is None:
-            return safe_load_file(checkpoint_file)
+            state_dict = safe_load_file(checkpoint_file)
+            state_dict = restore_shared_tensors(state_dict, metadata)
+            return state_dict
+
         else:
             # if we only have one device we can load everything directly
             if len(set(device_map.values())) == 1:
-                return safe_load_file(checkpoint_file, device=list(device_map.values())[0])
+                state_dict = safe_load_file(checkpoint_file, device=list(device_map.values())[0])
+                state_dict = restore_shared_tensors(state_dict, metadata)
+                return state_dict
 
             devices = list(set(device_map.values()) - {"disk"})
             # cpu device should always exist as fallback option
@@ -1222,6 +1239,8 @@ def load_state_dict(checkpoint_file, device_map=None):
                             progress_bar.update()
             if progress_bar is not None:
                 progress_bar.close()
+
+            tensors = restore_shared_tensors(tensors, metadata)
 
             return tensors
     else:
